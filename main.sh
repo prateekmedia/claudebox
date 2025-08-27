@@ -589,22 +589,26 @@ LABEL claudebox.project=\"$project_folder_name\""
     local final_dockerfile="$base_dockerfile"
     
     # Replace WHOLE lines that contain the placeholders (with optional spaces)
-    local final_dockerfile
-    final_dockerfile=$(awk -v pi="$profile_installations" -v lbs="$labels" '
-    # If the whole line is {{ PROFILE_INSTALLATIONS }}, print injected block and skip
-    /^[[:space:]]*\{\{[[:space:]]*PROFILE_INSTALLATIONS[[:space:]]*\}\}[[:space:]]*$/ { print pi; next }
-    # If the whole line is {{ LABELS }}, print labels block and skip
-    /^[[:space:]]*\{\{[[:space:]]*LABELS[[:space:]]*\}\}[[:space:]]*$/ { print lbs; next }
-    # Otherwise, print the line unchanged
-    { print }
-    ' <<<"$base_dockerfile") || error "Failed to apply Dockerfile substitutions"
+    # Use printf and process line by line to handle multiline replacements properly
+    local temp_dockerfile=""
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^[[:space:]]*\{\{PROFILE_INSTALLATIONS\}\}[[:space:]]*$ ]]; then
+            if [[ -n "$profile_installations" ]]; then
+                temp_dockerfile+="$profile_installations"$'\n'
+            fi
+        elif [[ "$line" =~ ^[[:space:]]*\{\{LABELS\}\}[[:space:]]*$ ]]; then
+            if [[ -n "$labels" ]]; then
+                temp_dockerfile+="$labels"$'\n'
+            fi
+        else
+            temp_dockerfile+="$line"$'\n'
+        fi
+    done <<< "$base_dockerfile"
+    
+    # Remove trailing newline if present
+    final_dockerfile="${temp_dockerfile%$'\n'}"
 
-    # Guard: ensure no unreplaced placeholders remain
-    if grep -q '{{PROFILE_INSTALLATIONS}}' <<<"$final_dockerfile" grep -q '{{LABELS}}' <<<"$final_dockerfile"; then
-    error "Unreplaced placeholders remain in generated Dockerfile"
-    fi
-
-    printf '%s' "$final_dockerfile" > "$dockerfile"
+    echo "$final_dockerfile" > "$dockerfile"
     
     # Build the image
     run_docker_build "$dockerfile" "$build_context"
